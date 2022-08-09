@@ -1,0 +1,52 @@
+[project]
+name = "graiax-shortcut"
+description = "Utilities for Graia Framework Community."
+authors = [
+    {name = "BlueGlassBlock", email = "blueglassblock@outlook.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.8,<4.0"
+dependencies = [
+    "graia-broadcast<1.0.0,>=0.18",
+    "creart~=0.2",
+]
+version = "0.1.0"
+
+[project.urls]
+Repository = "https://github.com/GraiaProject/graiax-shortcut"
+
+[project.optional-dependencies]
+[tool.pdm.build]
+package-dir = "src"
+
+[tool.pdm.dev-dependencies]
+dev = [
+    "black>=22.6.0",
+    "isort>=5.10.1",
+    "pre-commit<3.0,>=2.19",
+    "graia-saya~=0.0",
+]
+
+doc = [
+    "mkdocs-material>=8.0",
+    "mkdocstrings[python]>=0.18.0",
+    "mkdocs-gen-files>=0.3.0",
+    "mkdocs-literate-nav>=0.4.0",
+    "mkdocs-section-index>=0.3.0",
+]
+
+
+[tool.pdm.scripts]
+view_ref = {shell = "mkdocs serve", help = "Start the dev server for API ref preview"}
+post_install = "pre-commit install"
+lint = "pre-commit run --all-files"
+
+[tool.black]
+line-length = 120
+
+[tool.isort]
+profile = "black"
+atomic = true
+filter_files = true
+known_first_party = ["graiax.shortcut"]
