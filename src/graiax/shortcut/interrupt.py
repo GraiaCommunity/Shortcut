@@ -1,6 +1,10 @@
 """Broadcast Interrupt 相关的工具"""
+from __future__ import annotations
+
 import asyncio
+import contextlib
 from typing import (
+    Any,
     Awaitable,
     Callable,
     Generic,
@@ -18,6 +22,7 @@ from graia.broadcast.exceptions import ExecutionStop
 from graia.broadcast.interfaces.dispatcher import DispatcherInterface
 from graia.broadcast.interrupt import InterruptControl, Waiter
 from graia.broadcast.typing import T_Dispatcher
+from typing_extensions import Self, TypeVarTuple, Unpack
 
 T = TypeVar("T")
 
@@ -129,6 +134,10 @@ class EventWaiter(_ExtendedWaiter[T_E, T_E]):
         return event
 
 
+Ts = TypeVarTuple("Ts")
+V = TypeVar("V")
+
+
 class AnnotationWaiter(_ExtendedWaiter[T, T_E]):
     """用于直接获取对应标注的 Waiter."""
 
@@ -139,7 +148,6 @@ class AnnotationWaiter(_ExtendedWaiter[T, T_E]):
         dispatchers: Optional[List[T_Dispatcher]] = None,
         decorator: Optional[Decorator] = None,
         headless_decorators: Optional[List[Decorator]] = None,
-        extra_validator: Optional[Callable[[T_E], bool]] = None,
         priority: int = 15,
         block_propagation: bool = False,
     ) -> None:
@@ -150,17 +158,38 @@ class AnnotationWaiter(_ExtendedWaiter[T, T_E]):
             dispatchers (Optional[List[T_Dispatcher]], optional): Dispatcher 列表
             decorator (Decorator, optional): 可选的参数装饰器
             headless_decorators (Optional[List[Decorator]], optional): 无头 Decorator 列表
-            extra_validator (Optional[Callable[[T_E], bool]], optional): 额外的验证器
             priority (int, optional): 优先级, 越小越靠前
             block_propagation (bool): 是否阻止事件往下传播
         """
         super().__init__(events, dispatchers or [], headless_decorators or [], priority, block_propagation)
         self.annotation: Type[T] = annotation
         self.decorator = decorator
-        self.extra_validator = extra_validator
+        self.anno_validators: list[tuple[type, Callable[[Any], bool]]] = []
+
+    @overload
+    def validator(self, func: Callable[[T_E], bool], /) -> Self:
+        ...
+
+    @overload
+    def validator(self, annotation: Type[V], func: Callable[[V], bool], /) -> Self:
+        ...
+
+    def validator(self, *args: Any) -> Self:
+        if len(args) == 1 and callable(args[0]):
+            self.anno_validators.append((Dispatchable, args[0]))
+        elif len(args) == 2:
+            self.anno_validators.append(args)
+        else:
+            raise ValueError(f"Unrecognized arguments: {args}")
+        return self
 
     async def detected_event(self, dii: DispatcherInterface) -> T:
-        event = cast(T_E, dii.event)
-        if self.extra_validator and not self.extra_validator(event):
-            raise ExecutionStop
+        for anno, validator in self.anno_validators:
+            res = False
+            with contextlib.suppress(Exception):
+                val: Any = await dii.lookup_param("__AnnotationWaiter_annotation__", anno, None)
+                res = validator(val)
+            if not res:
+                raise ExecutionStop
+
         return await dii.lookup_param("__AnnotationWaiter_annotation__", self.annotation, self.decorator)

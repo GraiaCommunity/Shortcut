@@ -1,12 +1,12 @@
 """基于 format string 的消息链格式化器"""
-from graia.amnesia.message import __message_chain_class__ as Chain, __text_element_class__ as Text
-from graia.amnesia.message import Element
-
 from __future__ import annotations
 
 import string
 from typing import Any, Literal, Union
 
+from graia.amnesia.message import Element, MessageChain
+
+from ._util import chain, text
 
 _global_formatter = string.Formatter()
 
@@ -44,26 +44,26 @@ class Formatter:
 
     @staticmethod
     def _transform(obj: object) -> list[Element]:
-        if isinstance(obj, Chain):
+        if isinstance(obj, MessageChain):
             return obj.content
         elif isinstance(obj, (Element, str)):
-            return [Text(obj) if isinstance(obj, str) else obj]
+            return [text(obj) if isinstance(obj, str) else obj]
         else:
-            return [Text(str(obj))]
+            return [text(str(obj))]
 
     def format(
         self,
-        *args: Union[Element, Chain, str, Any],
-        **kwargs: Union[Element, Chain, str, Any],
-    ) -> Chain:
+        *args: Union[Element, MessageChain, str, Any],
+        **kwargs: Union[Element, MessageChain, str, Any],
+    ) -> MessageChain:
         """通过初始化时传入的格式字符串 格式化消息链
 
         Args:
-            *args (Union[Element, Chain, str, Any]): 格式化时传入的位置参数
-            **kwargs (Union[Element, Chain, str, Any]): 格式化时传入的关键字参数
+            *args (Union[Element, MessageChain, str, Any]): 格式化时传入的位置参数
+            **kwargs (Union[Element, MessageChain, str, Any]): 格式化时传入的关键字参数
 
         Returns:
-            Chain: 格式化后的消息链
+            MessageChain: 格式化后的消息链
         """
         result: list[Element] = []
         auto_arg_index: int | Literal[False] = 0
@@ -71,7 +71,7 @@ class Formatter:
         for field in self._fields:
             literal_text, field_name, format_spec, conversion = field
             if literal_text:
-                result.append(Text(literal_text))
+                result.append(text(literal_text))
             if field_name is None:
                 continue
             # if there's a field, output it
@@ -105,8 +105,8 @@ class Formatter:
 
             result.extend(self._transform(obj))
 
-        return Chain(result).merge()
+        return chain(result).merge()
 
 
-def format_chain(f_string: str, /, *args: Any, **kwargs: Any) -> Chain:
+def format_chain(f_string: str, /, *args: Any, **kwargs: Any) -> MessageChain:
     return Formatter(f_string).format(*args, **kwargs)
