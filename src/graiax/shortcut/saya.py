@@ -62,7 +62,7 @@ def ensure_cube_as_listener(func: Callable) -> Cube[ListenerSchema]:
     return func.__listen_cube__
 
 
-def ensure_cubu_as_scheduler(func: Callable) -> Cube[SchedulerSchema]:
+def ensure_cube_as_scheduler(func: Callable) -> Cube[SchedulerSchema]:
     if hasattr(func, "__schedule_cube__"):
         if not isinstance(func.__schedule_cube__.metaclass, SchedulerSchema):
             raise TypeError("Cube must be SchedulerSchema")
@@ -225,7 +225,7 @@ def schedule(timer: Union[Timer, str], cancelable: bool = True) -> Wrapper:
         Callable[[T_Callable], T_Callable]: 装饰器
     """
     def wrapper(func: T_Callable):
-        cube = ensure_cubu_as_scheduler(func)
+        cube = ensure_cube_as_scheduler(func)
         cube.metaclass.timer = crontabify(timer) if isinstance(timer, str) else timer
         cube.metaclass.cancelable = cancelable
         return func
@@ -252,7 +252,7 @@ def every(
 
     """
     def wrapper(func: T_Callable):
-        cube = ensure_cubu_as_scheduler(func)
+        cube = ensure_cube_as_scheduler(func)
         cube.metaclass.timer = _timer[mode](value, base=start)
         return func
 
@@ -261,7 +261,7 @@ def every(
 
 def crontab(pattern: str, base: Optional[TimeObject] = None, cancelable: bool = True) -> Wrapper:
     def wrapper(func: T_Callable):
-        cube = ensure_cubu_as_scheduler(func)
+        cube = ensure_cube_as_scheduler(func)
         cube.metaclass.timer = crontabify(pattern, base)
         cube.metaclass.cancelable = cancelable
         return func
