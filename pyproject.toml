@@ -2,7 +2,8 @@
 name = "graiax-shortcut"
 description = "Utilities for Graia Framework Community."
 authors = [
-    {name = "BlueGlassBlock", email = "blueglassblock@outlook.com"}
+    {name = "BlueGlassBlock", email = "blueglassblock@outlook.com"},
+    {name = "RF-Tar-Railt", email = "rf_tar_railt@qq.com"}
 ]
 license = {text = "MIT"}
 readme = "README.md"
@@ -11,6 +12,8 @@ dependencies = [
     "graia-broadcast<1.0.0,>=0.18",
     "creart~=0.2",
     "graia-amnesia<0.7.0,>=0.6.0",
+    "graia-scheduler>=0.0.8",
+    "graia-saya>=0.0.16",
 ]
 version = "0.1.0"
 

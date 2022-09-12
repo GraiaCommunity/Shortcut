@@ -8,6 +8,7 @@ from typing import (
     Dict,
     Generator,
     List,
+    Literal,
     Optional,
     Type,
     TypeVar,
@@ -21,6 +22,16 @@ from graia.broadcast.typing import T_Dispatcher
 from graia.saya import Channel
 from graia.saya.builtins.broadcast.schema import ListenerSchema
 from graia.saya.cube import Cube
+from graia.scheduler import Timer
+from graia.scheduler.saya import SchedulerSchema
+from graia.scheduler.timers import (
+    crontabify,
+    every_custom_hours,
+    every_custom_minutes,
+    every_custom_seconds,
+    every_second,
+)
+from graia.scheduler.utilles import TimeObject
 
 T_Callable = TypeVar("T_Callable", bound=Callable)
 Wrapper = Callable[[T_Callable], T_Callable]
@@ -35,20 +46,37 @@ def gen_subclass(cls: type[T]) -> Generator[type[T], Any, Any]:
 
 
 def ensure_cube_as_listener(func: Callable) -> Cube[ListenerSchema]:
-    if hasattr(func, "__cube__"):
-        if not isinstance(func.__cube__.metaclass, ListenerSchema):
+    if hasattr(func, "__listen_cube__"):
+        if not isinstance(func.__listen_cube__.metaclass, ListenerSchema):
             raise TypeError("Cube must be ListenerSchema")
-        return func.__cube__
+        return func.__listen_cube__
     channel = Channel.current()
     for cube in channel.content:
         if cube.content is func and isinstance(cube.metaclass, ListenerSchema):
-            func.__cube__ = cube
+            func.__listen_cube__ = cube
             break
     else:
         cube = Cube(func, ListenerSchema([], None, [], [], 16))
         channel.content.append(cube)
-        func.__cube__ = cube
-    return func.__cube__
+        func.__listen_cube__ = cube
+    return func.__listen_cube__
+
+
+def ensure_cubu_as_scheduler(func: Callable) -> Cube[SchedulerSchema]:
+    if hasattr(func, "__schedule_cube__"):
+        if not isinstance(func.__schedule_cube__.metaclass, SchedulerSchema):
+            raise TypeError("Cube must be SchedulerSchema")
+        return func.__schedule_cube__
+    channel = Channel.current()
+    for cube in channel.content:
+        if cube.content is func and isinstance(cube.metaclass, SchedulerSchema):
+            func.__listen_cube__ = cube
+            break
+    else:
+        cube = Cube(func, SchedulerSchema(every_second()))
+        channel.content.append(cube)
+        func.__schedule_cube__ = cube
+    return func.__schedule_cube__
 
 
 def dispatch(*dispatcher: T_Dispatcher) -> Wrapper:
@@ -135,7 +163,7 @@ def decorate(*args) -> Wrapper:
             cube.metaclass.decorators.extend(arg)
         elif isinstance(arg, dict):
             sig = inspect.signature(func)
-            sig.parameters
+            _ = sig.parameters
             for param in sig.parameters.values():
                 if param.name in arg:
                     setattr(param, "_default", arg[param.name])
@@ -186,3 +214,42 @@ def priority(priority: int, *events: Type[Dispatchable]) -> Wrapper:
         return func
 
     return wrapper
+
+
+def schedule(timer: Timer, cancelable: bool = False) -> Wrapper:
+    def wrapper(func: T_Callable):
+        cube = ensure_cubu_as_scheduler(func)
+        cube.metaclass.timer = timer
+        cube.metaclass.cancelable = cancelable
+        return func
+
+    return wrapper
+
+
+_timer = {"second": every_custom_seconds, "minute": every_custom_minutes, "hour": every_custom_hours}
+
+
+def every(
+    value: int = 1,
+    mode: Literal["second", "minute", "hour"] = "second",
+    start: Optional[TimeObject] = None,
+) -> Wrapper:
+    def wrapper(func: T_Callable):
+        cube = ensure_cubu_as_scheduler(func)
+        cube.metaclass.timer = _timer[mode](value, base=start)
+        return func
+
+    return wrapper
+
+
+def crontab(pattern: str, base: Optional[TimeObject] = None, cancelable: bool = False) -> Wrapper:
+    def wrapper(func: T_Callable):
+        cube = ensure_cubu_as_scheduler(func)
+        cube.metaclass.timer = crontabify(pattern, base)
+        cube.metaclass.cancelable = cancelable
+        return func
+
+    return wrapper
+
+
+on_timer = schedule
