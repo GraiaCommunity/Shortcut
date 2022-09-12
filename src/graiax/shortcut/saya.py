@@ -73,7 +73,7 @@ def ensure_cubu_as_scheduler(func: Callable) -> Cube[SchedulerSchema]:
             func.__listen_cube__ = cube
             break
     else:
-        cube = Cube(func, SchedulerSchema(every_second()))
+        cube = Cube(func, SchedulerSchema(every_second(), True))
         channel.content.append(cube)
         func.__schedule_cube__ = cube
     return func.__schedule_cube__
@@ -178,7 +178,6 @@ def listen(*event: Union[Type[Dispatchable], str]) -> Wrapper:
 
     Args:
         *event (Union[Type[Dispatchable], str]): 事件类型或事件名称
-        priority (int, optional): 事件优先级, 越小越优先
 
     Returns:
         Callable[[T_Callable], T_Callable]: 装饰器
@@ -216,10 +215,18 @@ def priority(priority: int, *events: Type[Dispatchable]) -> Wrapper:
     return wrapper
 
 
-def schedule(timer: Timer, cancelable: bool = False) -> Wrapper:
+def schedule(timer: Union[Timer, str], cancelable: bool = True) -> Wrapper:
+    """在当前 Saya Channel 中设置定时任务
+
+    Args:
+        timer (Union[Timer, str]): 定时器或者类似 crontab 的时间模式
+        cancelable (bool): 是否能够取消定时任务, 默认为 True
+    Returns:
+        Callable[[T_Callable], T_Callable]: 装饰器
+    """
     def wrapper(func: T_Callable):
         cube = ensure_cubu_as_scheduler(func)
-        cube.metaclass.timer = timer
+        cube.metaclass.timer = crontabify(timer) if isinstance(timer, str) else timer
         cube.metaclass.cancelable = cancelable
         return func
 
@@ -234,6 +241,16 @@ def every(
     mode: Literal["second", "minute", "hour"] = "second",
     start: Optional[TimeObject] = None,
 ) -> Wrapper:
+    """在当前 Saya Channel 中设置基本的定时任务
+
+    Args:
+        value (int): 时间间隔, 默认为 1
+        mode (Literal["second", "minute", "hour"]): 定时模式, 默认为 ’second‘
+        start (Optional[Type[Union[datetime, time, str, float]]]): 定时起始时间, 默认为 datetime.now()
+    Returns:
+        Callable[[T_Callable], T_Callable]: 装饰器
+
+    """
     def wrapper(func: T_Callable):
         cube = ensure_cubu_as_scheduler(func)
         cube.metaclass.timer = _timer[mode](value, base=start)
@@ -242,7 +259,7 @@ def every(
     return wrapper
 
 
-def crontab(pattern: str, base: Optional[TimeObject] = None, cancelable: bool = False) -> Wrapper:
+def crontab(pattern: str, base: Optional[TimeObject] = None, cancelable: bool = True) -> Wrapper:
     def wrapper(func: T_Callable):
         cube = ensure_cubu_as_scheduler(func)
         cube.metaclass.timer = crontabify(pattern, base)
