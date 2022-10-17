@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import dataclass, field
 from typing import (
     Any,
     Callable,
@@ -19,7 +20,7 @@ from typing import (
 from graia.broadcast.entities.decorator import Decorator
 from graia.broadcast.entities.event import Dispatchable
 from graia.broadcast.typing import T_Dispatcher
-from graia.saya import Channel
+from graia.saya import BaseSchema, Channel
 from graia.saya.builtins.broadcast.schema import ListenerSchema
 from graia.saya.cube import Cube
 from graia.scheduler import Timer
@@ -39,44 +40,84 @@ Wrapper = Callable[[T_Callable], T_Callable]
 T = TypeVar("T")
 
 
+@dataclass
+class TempSchema(BaseSchema):
+    # public
+    dispatchers: List[T_Dispatcher] = field(default_factory=list)
+    decorators: List[Decorator] = field(default_factory=list)
+    # listener
+    listening_events: List[Type[Dispatchable]] = field(default_factory=list)
+    priority: int = 16
+    # scheduler
+    timer: Timer = every_second()
+    cancelable: bool = field(default=False)
+
+
 def gen_subclass(cls: type[T]) -> Generator[type[T], Any, Any]:
     yield cls
     for sub in cls.__subclasses__():
         yield from gen_subclass(sub)
 
 
-def ensure_cube_as_listener(func: Callable) -> Cube[ListenerSchema]:
-    if hasattr(func, "__listen_cube__"):
-        if not isinstance(func.__listen_cube__.metaclass, ListenerSchema):
-            raise TypeError("Cube must be ListenerSchema")
-        return func.__listen_cube__
+def ensure_cube_mounted(func: Callable) -> Cube[TempSchema]:
+    if hasattr(func, "__cube__"):
+        if not isinstance(func.__cube__.metaclass, TempSchema):
+            raise TypeError(f"Cannot use {func.__cube__.metaclass.__name__} unless ensure the top behavior")
+        return func.__cube__
     channel = Channel.current()
     for cube in channel.content:
-        if cube.content is func and isinstance(cube.metaclass, ListenerSchema):
-            func.__listen_cube__ = cube
+        if cube.content is func and isinstance(cube.metaclass, TempSchema):
+            func.__cube__ = cube
             break
     else:
-        cube = Cube(func, ListenerSchema([], None, [], [], 16))
+        cube = Cube(func, TempSchema())
         channel.content.append(cube)
-        func.__listen_cube__ = cube
-    return func.__listen_cube__
+        func.__cube__ = cube
+    return func.__cube__
 
 
-def ensure_cube_as_scheduler(func: Callable) -> Cube[SchedulerSchema]:
-    if hasattr(func, "__schedule_cube__"):
-        if not isinstance(func.__schedule_cube__.metaclass, SchedulerSchema):
-            raise TypeError("Cube must be SchedulerSchema")
-        return func.__schedule_cube__
+def convert_to_listener(func: Callable) -> Cube[ListenerSchema]:
     channel = Channel.current()
+    if not hasattr(func, "__cube__"):
+        new: Cube[ListenerSchema] = Cube(func, ListenerSchema([], None, [], [], 16))
+        channel.content.append(new)
+        func.__cube__ = new
+        return new
+    prev = getattr(func, "__cube__")
+    if not isinstance(prev.metaclass, TempSchema):
+        raise TypeError(f"Cannot use {prev.metaclass.__name__} unless ensure the top behavior")
+    temp: TempSchema = prev.metaclass
+    new: Cube[ListenerSchema] = Cube(
+        func, ListenerSchema(temp.listening_events, None, temp.dispatchers, temp.decorators, temp.priority)
+    )
     for cube in channel.content:
-        if cube.content is func and isinstance(cube.metaclass, SchedulerSchema):
-            func.__listen_cube__ = cube
+        if cube.content is func and isinstance(cube.metaclass, TempSchema):
+            channel.content.remove(cube)
+            channel.content.append(new)
             break
-    else:
-        cube = Cube(func, SchedulerSchema(every_second(), True))
-        channel.content.append(cube)
-        func.__schedule_cube__ = cube
-    return func.__schedule_cube__
+    delattr(func, "__cube__")
+    return new
+
+
+def convert_to_scheduler(func: Callable) -> Cube[SchedulerSchema]:
+    channel = Channel.current()
+    if not hasattr(func, "__cube__"):
+        new: Cube[SchedulerSchema] = Cube(func, SchedulerSchema(every_second(), True))
+        channel.content.append(new)
+        func.__cube__ = new
+        return new
+    prev = getattr(func, "__cube__")
+    if not isinstance(prev.metaclass, TempSchema):
+        raise TypeError(f"Cannot use {prev.metaclass.__name__} unless ensure the top behavior")
+    temp: TempSchema = prev.metaclass
+    new = Cube(func, SchedulerSchema(temp.timer, temp.cancelable, temp.decorators, temp.dispatchers))
+    for cube in channel.content:
+        if cube.content is func and isinstance(cube.metaclass, TempSchema):
+            channel.content.remove(cube)
+            channel.content.append(new)
+            break
+    delattr(func, "__cube__")
+    return new
 
 
 def dispatch(*dispatcher: T_Dispatcher) -> Wrapper:
@@ -90,8 +131,8 @@ def dispatch(*dispatcher: T_Dispatcher) -> Wrapper:
     """
 
     def wrapper(func: T_Callable) -> T_Callable:
-        cube: Cube[ListenerSchema] = ensure_cube_as_listener(func)
-        cube.metaclass.inline_dispatchers.extend(dispatcher)
+        cube: Cube[TempSchema] = ensure_cube_mounted(func)
+        cube.metaclass.dispatchers.extend(dispatcher)
         return func
 
     return wrapper
@@ -158,7 +199,7 @@ def decorate(*args) -> Wrapper:
         arg = list(args)
 
     def wrapper(func: T_Callable) -> T_Callable:
-        cube = ensure_cube_as_listener(func)
+        cube = ensure_cube_mounted(func)
         if isinstance(arg, list):
             cube.metaclass.decorators.extend(arg)
         elif isinstance(arg, dict):
@@ -182,11 +223,11 @@ def listen(*event: Union[Type[Dispatchable], str]) -> Wrapper:
     Returns:
         Callable[[T_Callable], T_Callable]: 装饰器
     """
-    EVENTS: Dict[str, Type[Dispatchable]] = {e.__name__: e for e in gen_subclass(Dispatchable)}
-    events: List[Type[Dispatchable]] = [e if isinstance(e, type) else EVENTS[e] for e in event]
+    event_map: Dict[str, Type[Dispatchable]] = {e.__name__: e for e in gen_subclass(Dispatchable)}
+    events: List[Type[Dispatchable]] = [e if isinstance(e, type) else event_map[e] for e in event]
 
     def wrapper(func: T_Callable) -> T_Callable:
-        cube = ensure_cube_as_listener(func)
+        cube = convert_to_listener(func)
         cube.metaclass.listening_events.extend(events)
         return func
 
@@ -205,7 +246,7 @@ def priority(priority: int, *events: Type[Dispatchable]) -> Wrapper:
     """
 
     def wrapper(func: T_Callable) -> T_Callable:
-        cube = ensure_cube_as_listener(func)
+        cube = ensure_cube_mounted(func)
         cube.metaclass.priority = priority
         if events:
             extra: Dict[Optional[Type[Dispatchable]], int] = getattr(cube.metaclass, "extra_priorities", {})
@@ -224,8 +265,9 @@ def schedule(timer: Union[Timer, str], cancelable: bool = True) -> Wrapper:
     Returns:
         Callable[[T_Callable], T_Callable]: 装饰器
     """
+
     def wrapper(func: T_Callable):
-        cube = ensure_cube_as_scheduler(func)
+        cube = convert_to_scheduler(func)
         cube.metaclass.timer = crontabify(timer) if isinstance(timer, str) else timer
         cube.metaclass.cancelable = cancelable
         return func
@@ -251,8 +293,9 @@ def every(
         Callable[[T_Callable], T_Callable]: 装饰器
 
     """
+
     def wrapper(func: T_Callable):
-        cube = ensure_cube_as_scheduler(func)
+        cube = convert_to_scheduler(func)
         cube.metaclass.timer = _timer[mode](value, base=start)
         return func
 
@@ -261,7 +304,7 @@ def every(
 
 def crontab(pattern: str, base: Optional[TimeObject] = None, cancelable: bool = True) -> Wrapper:
     def wrapper(func: T_Callable):
-        cube = ensure_cube_as_scheduler(func)
+        cube = convert_to_scheduler(func)
         cube.metaclass.timer = crontabify(pattern, base)
         cube.metaclass.cancelable = cancelable
         return func
