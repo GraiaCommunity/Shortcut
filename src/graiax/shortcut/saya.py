@@ -48,6 +48,7 @@ class TempSchema(BaseSchema):
     # listener
     listening_events: List[Type[Dispatchable]] = field(default_factory=list)
     priority: int = 16
+    extra_priorities: Dict[Type[Dispatchable], int] = field(default_factory=dict)
     # scheduler
     timer: Timer = every_second()
     cancelable: bool = field(default=False)
@@ -87,7 +88,14 @@ def convert_to_listener(func: Callable) -> Cube[ListenerSchema]:
         raise TypeError(f"Cannot use {prev.metaclass.__name__} unless ensure the top behavior")
     temp: TempSchema = prev.metaclass
     new: Cube[ListenerSchema] = Cube(
-        func, ListenerSchema(temp.listening_events, None, temp.dispatchers, temp.decorators, temp.priority)
+        func, ListenerSchema(
+            temp.listening_events, 
+            None, 
+            temp.dispatchers, 
+            temp.decorators, 
+            temp.priority,
+            temp.extra_priorities
+        )
     )
     for cube in channel.content:
         if cube.content is func and isinstance(cube.metaclass, TempSchema):
