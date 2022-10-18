@@ -81,7 +81,6 @@ def convert_to_listener(func: Callable) -> Cube[ListenerSchema]:
     if not hasattr(func, "__cube__"):
         new: Cube[ListenerSchema] = Cube(func, ListenerSchema([], None, [], [], 16))
         channel.content.append(new)
-        func.__cube__ = new
         return new
     prev = getattr(func, "__cube__")
     if not isinstance(prev.metaclass, TempSchema):
@@ -104,7 +103,6 @@ def convert_to_scheduler(func: Callable) -> Cube[SchedulerSchema]:
     if not hasattr(func, "__cube__"):
         new: Cube[SchedulerSchema] = Cube(func, SchedulerSchema(every_second(), True))
         channel.content.append(new)
-        func.__cube__ = new
         return new
     prev = getattr(func, "__cube__")
     if not isinstance(prev.metaclass, TempSchema):
