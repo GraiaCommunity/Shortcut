@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+from datetime import datetime
 from typing import (
     Any,
     Callable,
@@ -10,6 +11,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Protocol,
     Type,
     TypeVar,
     Union,
@@ -19,9 +21,8 @@ from typing import (
 from graia.broadcast.entities.decorator import Decorator
 from graia.broadcast.entities.event import Dispatchable
 from graia.broadcast.typing import T_Dispatcher
-from graia.saya import Channel
 from graia.saya.builtins.broadcast.schema import ListenerSchema
-from graia.saya.cube import Cube
+from graia.saya.factory import BufferModifier, SchemaWrapper, buffer_modifier, factory
 from graia.scheduler import Timer
 from graia.scheduler.saya import SchedulerSchema
 from graia.scheduler.timers import (
@@ -29,7 +30,6 @@ from graia.scheduler.timers import (
     every_custom_hours,
     every_custom_minutes,
     every_custom_seconds,
-    every_second,
 )
 from graia.scheduler.utilles import TimeObject
 
@@ -45,41 +45,8 @@ def gen_subclass(cls: type[T]) -> Generator[type[T], Any, Any]:
         yield from gen_subclass(sub)
 
 
-def ensure_cube_as_listener(func: Callable) -> Cube[ListenerSchema]:
-    if hasattr(func, "__listen_cube__"):
-        if not isinstance(func.__listen_cube__.metaclass, ListenerSchema):
-            raise TypeError("Cube must be ListenerSchema")
-        return func.__listen_cube__
-    channel = Channel.current()
-    for cube in channel.content:
-        if cube.content is func and isinstance(cube.metaclass, ListenerSchema):
-            func.__listen_cube__ = cube
-            break
-    else:
-        cube = Cube(func, ListenerSchema([], None, [], [], 16))
-        channel.content.append(cube)
-        func.__listen_cube__ = cube
-    return func.__listen_cube__
-
-
-def ensure_cube_as_scheduler(func: Callable) -> Cube[SchedulerSchema]:
-    if hasattr(func, "__schedule_cube__"):
-        if not isinstance(func.__schedule_cube__.metaclass, SchedulerSchema):
-            raise TypeError("Cube must be SchedulerSchema")
-        return func.__schedule_cube__
-    channel = Channel.current()
-    for cube in channel.content:
-        if cube.content is func and isinstance(cube.metaclass, SchedulerSchema):
-            func.__listen_cube__ = cube
-            break
-    else:
-        cube = Cube(func, SchedulerSchema(every_second(), True))
-        channel.content.append(cube)
-        func.__schedule_cube__ = cube
-    return func.__schedule_cube__
-
-
-def dispatch(*dispatcher: T_Dispatcher) -> Wrapper:
+@buffer_modifier
+def dispatch(*dispatcher: T_Dispatcher) -> BufferModifier:
     """附加参数解析器，最后必须接 `listen` 才能起效
 
     Args:
@@ -89,12 +56,7 @@ def dispatch(*dispatcher: T_Dispatcher) -> Wrapper:
         Callable[[T_Callable], T_Callable]: 装饰器
     """
 
-    def wrapper(func: T_Callable) -> T_Callable:
-        cube: Cube[ListenerSchema] = ensure_cube_as_listener(func)
-        cube.metaclass.inline_dispatchers.extend(dispatcher)
-        return func
-
-    return wrapper
+    return lambda buffer: buffer.setdefault("dispatchers", []).extend(dispatcher)
 
 
 @overload
@@ -137,7 +99,8 @@ def decorate(map: Dict[str, Decorator], /) -> Wrapper:
     ...
 
 
-def decorate(*args) -> Wrapper:
+@buffer_modifier
+def decorate(*args) -> BufferModifier:
     """给指定参数名称附加装饰器
 
     Args:
@@ -157,23 +120,38 @@ def decorate(*args) -> Wrapper:
     else:
         arg = list(args)
 
-    def wrapper(func: T_Callable) -> T_Callable:
-        cube = ensure_cube_as_listener(func)
+    def wrapper(buffer: Dict[str, Any]) -> None:
         if isinstance(arg, list):
-            cube.metaclass.decorators.extend(arg)
+            buffer.setdefault("decorators", []).extend(arg)
         elif isinstance(arg, dict):
-            sig = inspect.signature(func)
-            _ = sig.parameters
-            for param in sig.parameters.values():
-                if param.name in arg:
-                    setattr(param, "_default", arg[param.name])
-            func.__signature__ = sig
-        return func
+            buffer.setdefault("decorator_map", {}).update(arg)
 
     return wrapper
 
 
-def listen(*event: Union[Type[Dispatchable], str]) -> Wrapper:
+@buffer_modifier
+def priority(priority: int, *events: Type[Dispatchable]) -> BufferModifier:
+    """设置事件优先级
+
+    Args:
+        priority (int): 事件优先级
+        *events (Type[Dispatchable]): 提供时则会设置这些事件的优先级, 否则设置全局优先级
+
+    Returns:
+        Callable[[T_Callable], T_Callable]: 装饰器
+    """
+
+    def wrapper(buffer: Dict[str, Any]) -> None:
+        if events:
+            buffer.setdefault("extra_priorities", {}).update((e, priority) for e in events)
+        else:
+            buffer["priority"] = priority
+
+    return wrapper
+
+
+@factory
+def listen(*event: Union[Type[Dispatchable], str]) -> SchemaWrapper:
     """在当前 Saya Channel 中监听指定事件
 
     Args:
@@ -185,88 +163,84 @@ def listen(*event: Union[Type[Dispatchable], str]) -> Wrapper:
     EVENTS: Dict[str, Type[Dispatchable]] = {e.__name__: e for e in gen_subclass(Dispatchable)}
     events: List[Type[Dispatchable]] = [e if isinstance(e, type) else EVENTS[e] for e in event]
 
-    def wrapper(func: T_Callable) -> T_Callable:
-        cube = ensure_cube_as_listener(func)
-        cube.metaclass.listening_events.extend(events)
-        return func
+    def wrapper(func: Callable, buffer: Dict[str, Any]) -> ListenerSchema:
+        decorator_map: Dict[str, Decorator] = buffer.pop("decorator_map", {})
+        buffer["inline_dispatchers"] = buffer.pop("dispatchers", [])
+        if decorator_map:
+            sig = inspect.signature(func)
+            for param in sig.parameters.values():
+                if decorator := decorator_map.get(param.name):
+                    setattr(param, "_default", decorator)
+            func.__signature__ = sig
+        return ListenerSchema(listening_events=events, **buffer)
 
     return wrapper
 
 
-def priority(priority: int, *events: Type[Dispatchable]) -> Wrapper:
-    """设置事件优先级
-
-    Args:
-        priority (int): 事件优先级
-        *events (Type[Dispatchable]): 提供时则会设置这些事件的优先级, 否则设置全局优先级
-
-    Returns:
-        Callable[[T_Callable], T_Callable]: 装饰器
-    """
-
-    def wrapper(func: T_Callable) -> T_Callable:
-        cube = ensure_cube_as_listener(func)
-        cube.metaclass.priority = priority
-        if events:
-            extra: Dict[Optional[Type[Dispatchable]], int] = getattr(cube.metaclass, "extra_priorities", {})
-            extra.update((e, priority) for e in events)
-        return func
-
-    return wrapper
-
-
-def schedule(timer: Union[Timer, str], cancelable: bool = True) -> Wrapper:
+@factory
+def schedule(timer: Union[Timer, str], cancelable: bool = True) -> SchemaWrapper:
     """在当前 Saya Channel 中设置定时任务
 
     Args:
-        timer (Union[Timer, str]): 定时器或者类似 crontab 的时间模式
+        timer (Union[Timer, str]): 定时器或者类似 crontab 的定时模板
         cancelable (bool): 是否能够取消定时任务, 默认为 True
     Returns:
         Callable[[T_Callable], T_Callable]: 装饰器
     """
-    def wrapper(func: T_Callable):
-        cube = ensure_cube_as_scheduler(func)
-        cube.metaclass.timer = crontabify(timer) if isinstance(timer, str) else timer
-        cube.metaclass.cancelable = cancelable
-        return func
 
-    return wrapper
+    return lambda _, buffer: SchedulerSchema(
+        timer=crontabify(timer) if isinstance(timer, str) else timer, cancelable=cancelable, **buffer
+    )
 
 
-_timer = {"second": every_custom_seconds, "minute": every_custom_minutes, "hour": every_custom_hours}
+class _TimerProtocol(Protocol):
+    def __call__(self, value: int, /, *, base: Optional[TimeObject] = None) -> Generator[datetime, None, None]:
+        ...
 
 
+_TIMER_MAPPING: Dict[str, _TimerProtocol] = {
+    "second": every_custom_seconds,
+    "minute": every_custom_minutes,
+    "hour": every_custom_hours,
+}
+
+
+@factory
 def every(
     value: int = 1,
     mode: Literal["second", "minute", "hour"] = "second",
     start: Optional[TimeObject] = None,
-) -> Wrapper:
+    cancelable: bool = True,
+) -> SchemaWrapper:
     """在当前 Saya Channel 中设置基本的定时任务
 
     Args:
         value (int): 时间间隔, 默认为 1
         mode (Literal["second", "minute", "hour"]): 定时模式, 默认为 ’second‘
-        start (Optional[Type[Union[datetime, time, str, float]]]): 定时起始时间, 默认为 datetime.now()
+        start (Optional[Union[datetime, time, str, float]]): 定时起始时间, 默认为 datetime.now()
+        cancelable (bool): 是否能够取消定时任务, 默认为 True
     Returns:
         Callable[[T_Callable], T_Callable]: 装饰器
-
     """
-    def wrapper(func: T_Callable):
-        cube = ensure_cube_as_scheduler(func)
-        cube.metaclass.timer = _timer[mode](value, base=start)
-        return func
 
-    return wrapper
+    return lambda _, buffer: SchedulerSchema(
+        timer=_TIMER_MAPPING[mode](value, base=start), cancelable=cancelable, **buffer
+    )
 
 
-def crontab(pattern: str, base: Optional[TimeObject] = None, cancelable: bool = True) -> Wrapper:
-    def wrapper(func: T_Callable):
-        cube = ensure_cube_as_scheduler(func)
-        cube.metaclass.timer = crontabify(pattern, base)
-        cube.metaclass.cancelable = cancelable
-        return func
+@factory
+def crontab(pattern: str, start: Optional[TimeObject] = None, cancelable: bool = True) -> SchemaWrapper:
+    """在当前 Saya Channel 中设置类似于 crontab 模板的定时任务
 
-    return wrapper
+    Args:
+        pattern (str): 类似 crontab 的定时模板
+        start (Optional[Union[datetime, time, str, float]]): 定时起始时间, 默认为 datetime.now()
+        cancelable (bool): 是否能够取消定时任务, 默认为 True
+    Returns:
+        Callable[[T_Callable], T_Callable]: 装饰器
+    """
+
+    return lambda _, buffer: SchedulerSchema(timer=crontabify(pattern, start), cancelable=cancelable, **buffer)
 
 
 on_timer = schedule
