@@ -11,7 +11,7 @@ requires-python = ">=3.8,<4.0"
 dependencies = [
     "graia-broadcast<1.0.0,>=0.18",
     "creart~=0.2",
-    "graia-amnesia<0.7.0,>=0.6.0",
+    "graia-amnesia~=0.7.0",
     "graia-scheduler>=0.0.8",
     "graia-saya<0.1.0,>=0.0.17",
 ]
