@@ -18,7 +18,7 @@ dependencies = [
 version = "0.2.0"
 
 [project.urls]
-Repository = "https://github.com/GraiaProject/graiax-shortcut"
+Repository = "https://github.com/GraiaCommunity/Shortcut"
 
 [project.optional-dependencies]
 [tool.pdm.build]
