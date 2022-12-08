@@ -31,7 +31,7 @@ def generic_issubclass(cls: Any, par: Union[type, Any, Tuple[type, ...]]) -> boo
     with contextlib.suppress(TypeError):
         if isinstance(par, AnnotatedType):
             return generic_issubclass(cls, get_args(par)[0])
-        if isinstance(par, (type, tuple)):
+        if isinstance(par, type):
             return issubclass(cls, par)
         if get_origin(par) in Unions:
             return any(generic_issubclass(cls, p) for p in get_args(par))
@@ -40,6 +40,10 @@ def generic_issubclass(cls: Any, par: Union[type, Any, Tuple[type, ...]]) -> boo
                 return any(generic_issubclass(cls, p) for p in par.__constraints__)
             if par.__bound__:
                 return generic_issubclass(cls, par.__bound__)
+        if isinstance(par, tuple):
+            return any(generic_issubclass(cls, p) for p in par)
+        if isinstance(origin := get_origin(par), type):
+            return issubclass(cls, origin)
     return False
 
 
