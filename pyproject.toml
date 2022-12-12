@@ -16,7 +16,7 @@ dependencies = [
     "graia-saya<0.1.0,>=0.0.17",
     "typing-extensions>=4.4.0",
 ]
-version = "0.2.0"
+version = "0.2.1"
 
 [project.urls]
 Repository = "https://github.com/GraiaCommunity/Shortcut"
