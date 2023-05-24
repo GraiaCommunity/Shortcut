@@ -15,6 +15,7 @@ dependencies = [
     "graia-scheduler>=0.0.8",
     "graia-saya<0.1.0,>=0.0.17",
     "typing-extensions>=4.4.0",
+    "pydantic~=1.8"
 ]
 version = "0.2.1"
 
@@ -22,6 +23,7 @@ version = "0.2.1"
 Repository = "https://github.com/GraiaCommunity/Shortcut"
 
 [project.optional-dependencies]
+
 [tool.pdm.build]
 package-dir = "src"
 
@@ -29,7 +31,7 @@ package-dir = "src"
 dev = [
     "black>=22.6.0",
     "isort>=5.10.1",
-    "pre-commit<3.0,>=2.19",
+    "pre-commit~=3.0",
 ]
 
 doc = [

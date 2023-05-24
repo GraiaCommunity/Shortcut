@@ -1,9 +1,19 @@
 import contextlib
+import enum
 import sys
 import types
 from typing import Tuple, Type, TypeVar, Union
 
-from typing_extensions import Annotated, Any, TypeGuard, get_args, get_origin
+from typing_extensions import (
+    Annotated,
+    Any,
+    Final,
+    Literal,
+    TypeAlias,
+    TypeGuard,
+    get_args,
+    get_origin,
+)
 
 _T = TypeVar("_T")
 
@@ -49,3 +59,13 @@ def generic_issubclass(cls: Any, par: Union[type, Any, Tuple[type, ...]]) -> boo
 
 def is_union(obj: Any) -> bool:
     return get_origin(obj) in Unions
+
+
+class _SentinelEnum(enum.Enum):
+    _Sentinel = "Sentinel"
+
+
+Sentinel: Final = _SentinelEnum._Sentinel
+
+Flag: TypeAlias = Literal[Sentinel]
+MaybeFlag: TypeAlias = Union[Flag, _T]
